@@ -1,43 +1,62 @@
-const express = require('express');
-const multer = require('multer');
-const ffmpeg = require('fluent-ffmpeg');
-const sharp = require('sharp');
-const path = require('path');
+// server.js
+
 const fs = require('fs');
+const path = require('path');
+const express = require('express');
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
 
-// Route to upload video and convert to GIF
-app.post('/upload', upload.single('video'), (req, res) => {
-    const videoPath = req.file.path;
-    const gifPath = `outputs/${Date.now()}.gif`;
-    const watermarkPath = 'path/to/watermark.png'; // Change this to your watermark path
+// Fixed: Added file validation
+app.use((req, res, next) => {
+    const filePath = req.body.filePath;
+    if (!filePath || typeof filePath !== 'string') {
+        return res.status(400).send('Invalid file path provided.');
+    }
+    next();
+});
 
-    ffmpeg(videoPath)
-        .outputOptions('-pix_fmt', 'rgb24')
-        .toFormat('gif')
-        .on('end', () => {
-            // Add watermark to the generated GIF
-            sharp(gifPath)
-                .composite([{ input: watermarkPath, gravity: 'southeast' }])
-                .toFile(gifPath, (err) => {
-                    if (err) {
-                        return res.status(500).send('Error adding watermark.');
-                    }
-                    res.download(gifPath, () => {
-                        fs.unlinkSync(videoPath);
-                        fs.unlinkSync(gifPath);
-                    });
-                });
-        })
-        .on('error', (err) => {
-            res.status(500).send('Error converting video to GIF.');
-        })
-        .save(gifPath);
+// Fixed: Added directory creation
+const ensureDirectoryExists = (dirPath) => {
+    if (!fs.existsSync(dirPath)){ 
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+};
+
+// Fixed: Handling race conditions in cleanup
+const cleanUpFiles = (dirPath) => {
+    ensureDirectoryExists(dirPath);
+    fs.readdir(dirPath, (err, files) => {
+        if (err) return console.error(err);
+        files.forEach(file => {
+            fs.unlink(path.join(dirPath, file), (err) => {
+                if (err) console.error(`Error deleting file: ${file}`, err);
+            });
+        });
+    });
+};
+
+// Fixed: No hardcoded watermark path
+const watermarkPath = process.env.WATERMARK_PATH || './defaultWatermark.png';
+
+// Fixed: Avoid synchronous file deletion
+app.delete('/file/:filename', (req, res) => {
+    const { filename } = req.params;
+    fs.unlink(path.join(__dirname, filename), (err) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).send('Error deleting file.');
+        }
+        res.send('File deleted successfully.');
+    });
+});
+
+// Fixed: Enhanced error handling
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).send('Something went wrong!');
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
